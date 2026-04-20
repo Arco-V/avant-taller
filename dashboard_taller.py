@@ -265,7 +265,7 @@ pct_moextra = df_filtrado['tiene_mo_extra'].mean()
 pct_recurrentes = (clientes_visitas['visitas'] > 1).mean() if not clientes_visitas.empty else 0
 top_gap = oportunidad.head(3)['moto'].tolist()
 
-st.markdown("### Qué mostrarle a dirección")
+st.markdown("### Highlights")
 st.write(f"- La facturación del período es **${total_fact:,.0f}**.".replace(",", "."))
 st.write(f"- Los repuestos explican el **{share_rep:.1%}** de la facturación y la M.O. extra el **{share_moextra:.1%}**.")
 st.write(f"- El **{pct_rep:.1%}** de las órdenes incluye repuestos, pero solo el **{pct_moextra:.1%}** incluye M.O. extra.")
