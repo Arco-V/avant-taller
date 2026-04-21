@@ -395,7 +395,7 @@ def main():
         help="Usa esta navegacion para cambiar entre el dashboard comercial y el operativo.",
     )
     st.sidebar.caption(
-        "La vista Operaciones integra el analisis de `dashboard_dataset.py` dentro de esta misma app."
+        "La vista Operaciones integra el analisis de los técnicos"
     )
 
     if vista == "Presupuesto":
