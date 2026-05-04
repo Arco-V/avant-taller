@@ -94,6 +94,153 @@ def calcular_servicios_por_dia(df):
     return len(df) / rango_dias if rango_dias > 0 else 0.0
 
 
+def calcular_cadencia_global(df):
+    df_id = df.dropna(subset=["identificador_cliente", "fecha"]).copy()
+    df_id = df_id.sort_values(["identificador_cliente", "fecha"])
+    df_id["_ant"] = df_id.groupby("identificador_cliente")["fecha"].shift(1)
+    df_id["_dias"] = (df_id["fecha"] - df_id["_ant"]).dt.days
+    df_id["_n"] = df_id.groupby("identificador_cliente").cumcount()
+    validos = df_id.dropna(subset=["_dias"])
+    if validos.empty:
+        return {}
+    return validos.groupby("_n")["_dias"].mean().to_dict()
+
+
+def tabla_cadencia_resumen(df):
+    df_id = df.dropna(subset=["identificador_cliente", "fecha"]).copy()
+    df_id = df_id.sort_values(["identificador_cliente", "fecha"])
+    df_id["_ant"] = df_id.groupby("identificador_cliente")["fecha"].shift(1)
+    df_id["_dias"] = (df_id["fecha"] - df_id["_ant"]).dt.days
+    df_id["_n"] = df_id.groupby("identificador_cliente").cumcount()
+    validos = df_id.dropna(subset=["_dias"])
+    if validos.empty:
+        return pd.DataFrame()
+    resumen = validos.groupby("_n")["_dias"].agg(dias_prom="mean", n="count").reset_index()
+    resumen = resumen[(resumen["n"] >= 3) & (resumen["_n"] <= 8)].copy()
+    resumen["Transicion"] = resumen["_n"].apply(lambda x: f"{x}° → {x + 1}° visita")
+    resumen["Dias promedio"] = resumen["dias_prom"].round(0).astype(int)
+    resumen["Meses promedio"] = (resumen["dias_prom"] / 30).round(1)
+    resumen["Clientes (n)"] = resumen["n"]
+    return resumen[["Transicion", "Dias promedio", "Meses promedio", "Clientes (n)"]]
+
+
+def asignar_accion(row, cadencia_global):
+    visitas = int(row["visitas"])
+    meses_desde = row["meses_desde_ultima"]
+    avg_meses = row["avg_meses_cliente"]
+    km = row["km_promedio"]
+
+    esperado_dias = cadencia_global.get(visitas)
+    ref = round(esperado_dias / 30, 1) if esperado_dias else (round(avg_meses, 1) if pd.notna(avg_meses) else None)
+
+    if visitas >= 6:
+        return "Candidato a moto nueva — proponer upgrade o test ride"
+    if pd.notna(km) and km > 20000:
+        return "Alto kilometraje — ofrecer revision avanzada o nueva moto"
+    if ref and pd.notna(meses_desde):
+        if meses_desde >= ref * 2:
+            return f"Reactivacion urgente — {meses_desde:.0f} meses sin visitar"
+        if meses_desde >= ref * 0.85:
+            return f"Activar visita #{visitas + 1} — momento ideal de contacto"
+        if meses_desde >= ref * 0.6:
+            falta = max(0, round(ref - meses_desde))
+            return f"Recordatorio en ~{falta} mes(es) — service proximo"
+    return "Seguimiento habitual"
+
+
+def construir_tabla_recurrentes(df, cadencia_global):
+    today = pd.Timestamp.now().normalize()
+    df_id = df.dropna(subset=["identificador_cliente"]).copy()
+    df_id = df_id.sort_values(["identificador_cliente", "fecha"])
+    df_id["_ant"] = df_id.groupby("identificador_cliente")["fecha"].shift(1)
+    df_id["_dias_entre"] = (df_id["fecha"] - df_id["_ant"]).dt.days
+
+    avg_dias = df_id.groupby("identificador_cliente")["_dias_entre"].mean()
+
+    agg = (
+        df_id.groupby("identificador_cliente")
+        .agg(
+            cliente=("cliente", lambda x: x.dropna().iloc[0] if not x.dropna().empty else ""),
+            email=("email", lambda x: x.dropna().iloc[0] if not x.dropna().empty else ""),
+            modelo=("modelo", lambda x: x.mode().iloc[0] if not x.mode().empty else ""),
+            km_promedio=("km", "mean"),
+            visitas=("orden", "count"),
+            ultima_visita=("fecha", "max"),
+        )
+        .reset_index()
+    )
+
+    agg = agg.merge(avg_dias.rename("avg_dias"), on="identificador_cliente", how="left")
+    agg = agg[agg["visitas"] > 1].copy()
+    agg["avg_meses_cliente"] = agg["avg_dias"] / 30
+    agg["meses_desde_ultima"] = (today - agg["ultima_visita"]).dt.days / 30
+
+    agg["Accion recomendada"] = agg.apply(
+        lambda row: asignar_accion(row, cadencia_global), axis=1
+    )
+
+    agg = agg.sort_values("visitas", ascending=False)
+    out = agg[[
+        "cliente", "identificador_cliente", "email", "modelo",
+        "visitas", "ultima_visita", "avg_meses_cliente", "meses_desde_ultima", "Accion recomendada",
+    ]].copy()
+    out["ultima_visita"] = out["ultima_visita"].dt.strftime("%d/%m/%Y")
+    out["avg_meses_cliente"] = out["avg_meses_cliente"].apply(
+        lambda x: f"{x:.1f}" if pd.notna(x) else "—"
+    )
+    out["meses_desde_ultima"] = out["meses_desde_ultima"].apply(
+        lambda x: f"{x:.1f}" if pd.notna(x) else "—"
+    )
+    out.columns = [
+        "Cliente", "Contacto", "Email", "Modelo frecuente",
+        "Visitas", "Ultima visita", "Meses entre visitas (prom)", "Meses desde ultima", "Accion recomendada",
+    ]
+    return out
+
+
+def construir_tabla_primera_visita(df):
+    today = pd.Timestamp.now().normalize()
+    df_id = df.dropna(subset=["identificador_cliente"]).copy()
+    conteo = df_id.groupby("identificador_cliente")["orden"].count()
+    ids_unica = conteo[conteo == 1].index
+    df_unica = df_id[df_id["identificador_cliente"].isin(ids_unica)]
+    if df_unica.empty:
+        return pd.DataFrame()
+
+    agg = (
+        df_unica.groupby("identificador_cliente")
+        .agg(
+            cliente=("cliente", lambda x: x.dropna().iloc[0] if not x.dropna().empty else ""),
+            email=("email", lambda x: x.dropna().iloc[0] if not x.dropna().empty else ""),
+            modelo=("modelo", lambda x: x.dropna().iloc[0] if not x.dropna().empty else ""),
+            km=("km", "mean"),
+            fecha=("fecha", "max"),
+        )
+        .reset_index()
+    )
+
+    agg["meses_desde_visita"] = (today - agg["fecha"]).dt.days / 30
+
+    def accion_primera(row):
+        if pd.notna(row["km"]) and row["km"] < 2000:
+            return "Ofrecer accesorios (moto casi nueva)"
+        if pd.notna(row["meses_desde_visita"]) and row["meses_desde_visita"] > 4:
+            return "Sin retorno — contactar para reactivar"
+        return "Invitar a programar proximo service"
+
+    agg["Accion recomendada"] = agg.apply(accion_primera, axis=1)
+    agg = agg.sort_values("meses_desde_visita", ascending=False)
+    out = agg[[
+        "cliente", "identificador_cliente", "email", "modelo", "fecha", "meses_desde_visita", "Accion recomendada",
+    ]].copy()
+    out["fecha"] = out["fecha"].dt.strftime("%d/%m/%Y")
+    out["meses_desde_visita"] = out["meses_desde_visita"].apply(
+        lambda x: f"{x:.1f}" if pd.notna(x) else "—"
+    )
+    out.columns = ["Cliente", "Contacto", "Email", "Modelo", "Fecha visita", "Meses desde visita", "Accion recomendada"]
+    return out
+
+
 def render_dashboard_dataset(path=DEFAULT_DATASET_PATH):
     df = leer_dataset(path)
 
@@ -359,36 +506,33 @@ def render_dashboard_dataset(path=DEFAULT_DATASET_PATH):
         )
         st.plotly_chart(fig_freq_vis, width="stretch")
 
-    st.subheader("Clientes recurrentes")
-    clientes_rec = (
-        df_filtrado.dropna(subset=["identificador_cliente"])
-        .groupby("identificador_cliente")
-        .agg(
-            cliente=("cliente", lambda x: x.dropna().iloc[0] if not x.dropna().empty else ""),
-            email=("email", lambda x: x.dropna().iloc[0] if not x.dropna().empty else ""),
-            modelo=("modelo", lambda x: x.mode().iloc[0] if not x.mode().empty else ""),
-            etapa_service=("etapa_service", lambda x: x.dropna().iloc[-1] if not x.dropna().empty else ""),
-            fecha=("fecha", "max"),
-            orden=("orden", "count"),
-        )
-        .reset_index()
+    cadencia_global = calcular_cadencia_global(df_filtrado)
+
+    st.subheader("Cadencia de retorno entre visitas")
+    st.caption(
+        "Tiempo promedio que transcurre entre una visita y la siguiente, calculado sobre todos los clientes recurrentes del periodo seleccionado."
     )
-    clientes_rec["visitas"] = clientes_rec["orden"]
-    clientes_rec = clientes_rec[clientes_rec["visitas"] > 1].sort_values("visitas", ascending=False)
-    clientes_rec["fecha"] = clientes_rec["fecha"].dt.strftime("%d/%m/%Y")
-    clientes_rec = clientes_rec[
-        ["cliente", "identificador_cliente", "email", "modelo", "etapa_service", "visitas", "fecha"]
-    ]
-    clientes_rec.columns = [
-        "Cliente",
-        "Contacto",
-        "Email",
-        "Modelo frecuente",
-        "Ultima etapa de service",
-        "Visitas",
-        "Ultima visita",
-    ]
-    st.dataframe(clientes_rec.head(20), use_container_width=True)
+    df_cad = tabla_cadencia_resumen(df_filtrado)
+    if not df_cad.empty:
+        st.dataframe(df_cad, use_container_width=True, hide_index=True)
+    else:
+        st.info("Sin datos suficientes para calcular cadencia.")
+
+    st.subheader("Clientes recurrentes — acciones recomendadas")
+    st.caption(
+        "La accion recomendada combina la cadencia global del taller (cuanto tarda cada cliente en promedio en volver segun su etapa) "
+        "con los meses transcurridos desde la ultima visita de cada cliente."
+    )
+    tabla_rec = construir_tabla_recurrentes(df_filtrado, cadencia_global)
+    st.dataframe(tabla_rec.head(30), use_container_width=True, hide_index=True)
+
+    with st.expander("Clientes de primera visita — acciones sugeridas"):
+        st.caption("Clientes que solo vinieron una vez en el periodo seleccionado, ordenados por tiempo sin retorno.")
+        tabla_pv = construir_tabla_primera_visita(df_filtrado)
+        if not tabla_pv.empty:
+            st.dataframe(tabla_pv.head(30), use_container_width=True, hide_index=True)
+        else:
+            st.info("No hay clientes de primera visita en el periodo seleccionado.")
 
     st.header("Hallazgos Estrategicos")
     pct_rec = recurrentes / clientes_ident if clientes_ident > 0 else 0
