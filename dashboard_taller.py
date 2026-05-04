@@ -392,6 +392,7 @@ def main():
     vista = st.sidebar.radio(
         "Seccion",
         ["Presupuesto", "Operaciones"],
+        index=1,
         help="Usa esta navegacion para cambiar entre el dashboard comercial y el operativo.",
     )
     st.sidebar.caption(
