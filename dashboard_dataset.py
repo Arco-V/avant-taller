@@ -61,7 +61,7 @@ def leer_dataset(path=DEFAULT_DATASET_PATH):
         na_values=["", "NA", "NULL"],
     )
 
-    df["fecha"] = pd.to_datetime(df["fecha"], format="%d/%m/%Y", errors="coerce")
+    df["fecha"] = pd.to_datetime(df["fecha"], dayfirst=True, errors="coerce")
     df["km"] = pd.to_numeric(df["km"], errors="coerce")
     df["anio"] = pd.to_numeric(df["anio"], errors="coerce")
     df["nro_serv"] = pd.to_numeric(df["nro_serv"], errors="coerce")
@@ -104,8 +104,9 @@ def render_dashboard_dataset(path=DEFAULT_DATASET_PATH):
     )
 
     st.sidebar.header("Filtros")
-    fecha_min = df["fecha"].min().date()
-    fecha_max = df["fecha"].max().date()
+    fechas_validas = df["fecha"].dropna()
+    fecha_min = fechas_validas.min().date() if not fechas_validas.empty else pd.Timestamp("2022-01-01").date()
+    fecha_max = fechas_validas.max().date() if not fechas_validas.empty else pd.Timestamp.today().date()
     rango_fecha = st.sidebar.date_input(
         "Rango de fechas",
         [fecha_min, fecha_max],
