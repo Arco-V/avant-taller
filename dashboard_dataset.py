@@ -33,7 +33,6 @@ def leer_dataset(path=DEFAULT_DATASET_PATH):
         "patente",
         "modelo",
         "anio",
-        "vendido_por",
         "nro_motor",
         "nro_chasis",
         "tipo_servicio",
@@ -50,6 +49,7 @@ def leer_dataset(path=DEFAULT_DATASET_PATH):
         "area",
         "celular",
         "email",
+        "cliente_agm",
     ]
 
     df = pd.read_csv(
