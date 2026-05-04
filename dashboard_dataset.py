@@ -134,7 +134,8 @@ def asignar_accion(row, cadencia_global):
     ref = round(esperado_dias / 30, 1) if esperado_dias else (round(avg_meses, 1) if pd.notna(avg_meses) else None)
 
     # Cliente perdido: más de 6 meses sin visitar, o más del doble del intervalo esperado
-    if pd.notna(meses_desde) and (meses_desde > 6 or (ref and meses_desde >= ref * 2)):
+    umbral_perdido = ref * 2 if ref else 12
+    if pd.notna(meses_desde) and meses_desde > umbral_perdido:
         return "Cliente perdido — considerar campaña de reactivacion"
 
     # Candidato a moto nueva: muy fiel Y alto kilometraje
@@ -254,8 +255,9 @@ def construir_tabla_primera_visita(df, cadencia_global):
         meses = row["meses_desde_visita"]
         km = row["km"]
 
-        # Perdido: más de 6 meses sin volver
-        if pd.notna(meses) and meses > 6:
+        # Perdido: más del doble del intervalo esperado (fallback: 12 meses)
+        umbral_perdido = ref_meses * 2 if ref_meses else 12
+        if pd.notna(meses) and meses > umbral_perdido:
             return "Cliente perdido — considerar campaña de reactivacion"
 
         # Moto casi nueva Y visita muy reciente: oportunidad de venta de accesorios
@@ -570,13 +572,27 @@ def render_dashboard_dataset(path=DEFAULT_DATASET_PATH):
         "con los meses transcurridos desde la ultima visita de cada cliente."
     )
     tabla_rec = construir_tabla_recurrentes(df_filtrado, cadencia_global)
-    st.dataframe(tabla_rec.head(30), use_container_width=True, hide_index=True)
+    st.dataframe(tabla_rec, use_container_width=True, hide_index=True)
+    st.download_button(
+        "Descargar tabla recurrentes (CSV)",
+        data=tabla_rec.to_csv(index=False).encode("utf-8"),
+        file_name="clientes_recurrentes.csv",
+        mime="text/csv",
+        key="dl_recurrentes",
+    )
 
     with st.expander("Clientes de primera visita — acciones sugeridas"):
         st.caption("Clientes que solo vinieron una vez en el periodo seleccionado, ordenados por tiempo sin retorno.")
         tabla_pv = construir_tabla_primera_visita(df_filtrado, cadencia_global)
         if not tabla_pv.empty:
-            st.dataframe(tabla_pv.head(30), use_container_width=True, hide_index=True)
+            st.dataframe(tabla_pv, use_container_width=True, hide_index=True)
+            st.download_button(
+                "Descargar tabla primera visita (CSV)",
+                data=tabla_pv.to_csv(index=False).encode("utf-8"),
+                file_name="clientes_primera_visita.csv",
+                mime="text/csv",
+                key="dl_primera_visita",
+            )
         else:
             st.info("No hay clientes de primera visita en el periodo seleccionado.")
 
