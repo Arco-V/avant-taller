@@ -133,18 +133,30 @@ def asignar_accion(row, cadencia_global):
     esperado_dias = cadencia_global.get(visitas)
     ref = round(esperado_dias / 30, 1) if esperado_dias else (round(avg_meses, 1) if pd.notna(avg_meses) else None)
 
+    # Cliente perdido: más de 6 meses sin visitar, o más del doble del intervalo esperado
+    if pd.notna(meses_desde) and (meses_desde > 6 or (ref and meses_desde >= ref * 2)):
+        return "Cliente perdido — considerar campaña de reactivacion"
+
+    # Candidato a moto nueva: muy fiel Y alto kilometraje
+    if visitas >= 6 and pd.notna(km) and km > 15000:
+        return "Candidato a moto nueva — alta fidelidad y alto kilometraje"
+
+    # Muy fiel pero km no tan alto: reforzar vínculo
     if visitas >= 6:
-        return "Candidato a moto nueva — proponer upgrade o test ride"
+        return "Cliente muy fiel — proponer beneficio o programa de lealtad"
+
+    # Alto km aunque no tan frecuente
     if pd.notna(km) and km > 20000:
-        return "Alto kilometraje — ofrecer revision avanzada o nueva moto"
+        return "Alto kilometraje — evaluar nueva moto o revision integral"
+
+    # Ventana de contacto basada en cadencia
     if ref and pd.notna(meses_desde):
-        if meses_desde >= ref * 2:
-            return f"Reactivacion urgente — {meses_desde:.0f} meses sin visitar"
         if meses_desde >= ref * 0.85:
             return f"Activar visita #{visitas + 1} — momento ideal de contacto"
         if meses_desde >= ref * 0.6:
             falta = max(0, round(ref - meses_desde))
             return f"Recordatorio en ~{falta} mes(es) — service proximo"
+
     return "Seguimiento habitual"
 
 
@@ -179,7 +191,20 @@ def construir_tabla_recurrentes(df, cadencia_global):
         lambda row: asignar_accion(row, cadencia_global), axis=1
     )
 
-    agg = agg.sort_values("visitas", ascending=False)
+    _prioridad = {
+        "Activar visita": 1,
+        "Recordatorio": 2,
+        "Seguimiento habitual": 3,
+        "Cliente muy fiel": 4,
+        "Candidato a moto nueva": 4,
+        "Alto kilometraje": 4,
+        "Cliente perdido": 5,
+    }
+    agg["_orden"] = agg["Accion recomendada"].apply(
+        lambda x: next((v for k, v in _prioridad.items() if k in x), 6)
+    )
+    agg = agg.sort_values(["_orden", "meses_desde_ultima"], ascending=[True, False])
+
     out = agg[[
         "cliente", "identificador_cliente", "email", "modelo",
         "visitas", "ultima_visita", "avg_meses_cliente", "meses_desde_ultima", "Accion recomendada",
@@ -198,7 +223,7 @@ def construir_tabla_recurrentes(df, cadencia_global):
     return out
 
 
-def construir_tabla_primera_visita(df):
+def construir_tabla_primera_visita(df, cadencia_global):
     today = pd.Timestamp.now().normalize()
     df_id = df.dropna(subset=["identificador_cliente"]).copy()
     conteo = df_id.groupby("identificador_cliente")["orden"].count()
@@ -221,15 +246,36 @@ def construir_tabla_primera_visita(df):
 
     agg["meses_desde_visita"] = (today - agg["fecha"]).dt.days / 30
 
+    # Intervalo promedio global entre la 1° y la 2° visita (cumcount=1)
+    ref_dias = cadencia_global.get(1)
+    ref_meses = round(ref_dias / 30, 1) if ref_dias else 2.0
+
     def accion_primera(row):
-        if pd.notna(row["km"]) and row["km"] < 2000:
-            return "Ofrecer accesorios (moto casi nueva)"
-        if pd.notna(row["meses_desde_visita"]) and row["meses_desde_visita"] > 4:
-            return "Sin retorno — contactar para reactivar"
-        return "Invitar a programar proximo service"
+        meses = row["meses_desde_visita"]
+        km = row["km"]
+
+        # Perdido: más de 6 meses sin volver
+        if pd.notna(meses) and meses > 6:
+            return "Cliente perdido — considerar campaña de reactivacion"
+
+        # Moto casi nueva Y visita muy reciente: oportunidad de venta de accesorios
+        if pd.notna(km) and km < 2000 and pd.notna(meses) and meses < 1.5:
+            return "Ofrecer accesorios — moto nueva, visita reciente"
+
+        # Ya pasó el tiempo esperado para volver
+        if pd.notna(meses) and meses >= ref_meses * 0.85:
+            return "Activar segunda visita — momento ideal de contacto"
+
+        # Se acerca el momento
+        if pd.notna(meses) and meses >= ref_meses * 0.6:
+            falta = max(0, round(ref_meses - meses))
+            return f"Preparar contacto — segunda visita en ~{falta} mes(es)"
+
+        return "Invitar a programar segunda visita"
 
     agg["Accion recomendada"] = agg.apply(accion_primera, axis=1)
-    agg = agg.sort_values("meses_desde_visita", ascending=False)
+    # Más recientes primero: ofrecer accesorios y activar segunda visita en la parte superior
+    agg = agg.sort_values("meses_desde_visita", ascending=True)
     out = agg[[
         "cliente", "identificador_cliente", "email", "modelo", "fecha", "meses_desde_visita", "Accion recomendada",
     ]].copy()
@@ -528,7 +574,7 @@ def render_dashboard_dataset(path=DEFAULT_DATASET_PATH):
 
     with st.expander("Clientes de primera visita — acciones sugeridas"):
         st.caption("Clientes que solo vinieron una vez en el periodo seleccionado, ordenados por tiempo sin retorno.")
-        tabla_pv = construir_tabla_primera_visita(df_filtrado)
+        tabla_pv = construir_tabla_primera_visita(df_filtrado, cadencia_global)
         if not tabla_pv.empty:
             st.dataframe(tabla_pv.head(30), use_container_width=True, hide_index=True)
         else:
