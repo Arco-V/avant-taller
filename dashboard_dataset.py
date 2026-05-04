@@ -302,13 +302,30 @@ def render_dashboard_dataset(path=DEFAULT_DATASET_PATH):
     fechas_validas = df["fecha"].dropna()
     fecha_min = fechas_validas.min().date() if not fechas_validas.empty else pd.Timestamp("2022-01-01").date()
     fecha_max = fechas_validas.max().date() if not fechas_validas.empty else pd.Timestamp.today().date()
-    rango_fecha = st.sidebar.date_input(
-        "Rango de fechas",
-        [fecha_min, fecha_max],
-        min_value=fecha_min,
-        max_value=fecha_max,
-        key="dataset_rango_fecha",
+    fecha_max_ts = pd.Timestamp(fecha_max)
+
+    periodo = st.sidebar.selectbox(
+        "Periodo",
+        ["Todo el periodo", "Ultimos 3 meses", "Ultimos 6 meses", "Ultimo año", "Personalizado"],
+        key="dataset_periodo",
     )
+
+    if periodo == "Ultimos 3 meses":
+        rango_fecha = ((fecha_max_ts - pd.DateOffset(months=3)).date(), fecha_max)
+    elif periodo == "Ultimos 6 meses":
+        rango_fecha = ((fecha_max_ts - pd.DateOffset(months=6)).date(), fecha_max)
+    elif periodo == "Ultimo año":
+        rango_fecha = ((fecha_max_ts - pd.DateOffset(years=1)).date(), fecha_max)
+    elif periodo == "Personalizado":
+        rango_fecha = st.sidebar.date_input(
+            "Rango de fechas",
+            [fecha_min, fecha_max],
+            min_value=fecha_min,
+            max_value=fecha_max,
+            key="dataset_rango_fecha",
+        )
+    else:
+        rango_fecha = (fecha_min, fecha_max)
 
     tipo_servicio = st.sidebar.selectbox(
         "Tipo de servicio",
