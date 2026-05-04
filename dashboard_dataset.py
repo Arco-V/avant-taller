@@ -5,7 +5,7 @@ import plotly.express as px
 import streamlit as st
 
 
-DEFAULT_DATASET_PATH = "dataset_taller.csv"
+DEFAULT_DATASET_PATH = "dataset_taller_2022_2026.csv"
 
 
 def limpiar_telefono(x):
