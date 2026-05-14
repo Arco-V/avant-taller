@@ -6,6 +6,7 @@ import plotly.express as px
 import streamlit as st
 
 from dashboard_dataset import render_dashboard_dataset
+from importar_excel import render_importar_excel
 
 
 DEFAULT_TALLER_PATH = "taller 2026.csv"
@@ -391,9 +392,9 @@ def main():
     st.sidebar.title("Dashboard Taller Avant")
     vista = st.sidebar.radio(
         "Seccion",
-        ["Presupuesto", "Operaciones"],
+        ["Presupuesto", "Operaciones", "Importar Excel"],
         index=1,
-        help="Usa esta navegacion para cambiar entre el dashboard comercial y el operativo.",
+        help="Usa esta navegacion para cambiar entre el dashboard comercial, el operativo o importar un Excel mensual.",
     )
     st.sidebar.caption(
         "La vista Operaciones integra el analisis de los técnicos"
@@ -401,8 +402,10 @@ def main():
 
     if vista == "Presupuesto":
         render_dashboard_presupuesto()
-    else:
+    elif vista == "Operaciones":
         render_dashboard_dataset()
+    else:
+        render_importar_excel()
 
 
 if __name__ == "__main__":
